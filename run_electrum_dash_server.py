@@ -235,7 +235,7 @@ def start_server(config):
     if ssl_certfile is '' or ssl_keyfile is '':
         stratum_tcp_ssl_port = None
 
-    print_log("Starting Electrum server on", host)
+    print_log("Starting Electrum Dash server on", host)
 
     # Create hub
     dispatcher = Dispatcher(config)
