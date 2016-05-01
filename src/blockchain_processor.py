@@ -599,6 +599,13 @@ class BlockchainProcessor(Processor):
         elif method == 'blockchain.relayfee':
             result = self.relayfee
 
+        # Masternode methods.
+
+        elif method == 'masternode.announce.broadcast':
+            # masternodebroadcast expects a vector.
+            mn = '01' + str(params[0])
+            result = self.dashd('masternodebroadcast', ['relay', mn])
+
         else:
             raise BaseException("unknown method:%s" % method)
 
