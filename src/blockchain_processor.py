@@ -55,6 +55,7 @@ class BlockchainProcessor(Processor):
         self.watch_headers = []
         self.watch_proposals = []
         self.watched_addresses = {}
+        self.watched_masternodes = {}
 
         self.history_cache = {}
         self.merkle_cache = {}
@@ -88,6 +89,7 @@ class BlockchainProcessor(Processor):
 
         self.sent_height = 0
         self.sent_header = None
+        self.sent_masternodes_status = {}
         self.sent_proposals_status = None
 
         # catch_up headers
@@ -381,6 +383,9 @@ class BlockchainProcessor(Processor):
             self.merkle_cache[tx_hash] = out
         return out
 
+    def get_masternodes_status(self):
+        return self.dashd('masternode', ['list'])
+
     def get_proposals_status(self):
         return self.dashd('mnbudget', ['list'])
 
@@ -474,6 +479,14 @@ class BlockchainProcessor(Processor):
                 if session not in self.watch_headers:
                     self.watch_headers.append(session)
 
+            elif method == 'masternode.subscribe':
+                collateral = params[0]
+                l = self.watched_masternodes.get(collateral)
+                if l is None:
+                    self.watched_masternodes[collateral] = [session]
+                elif session not in l:
+                    l.append(session)
+
             elif method == 'masternode.proposals.subscribe':
                 if session not in self.watch_proposals:
                     self.watch_proposals.append(session)
@@ -495,6 +508,18 @@ class BlockchainProcessor(Processor):
             elif method == 'blockchain.headers.subscribe':
                 if session in self.watch_headers:
                     self.watch_headers.remove(session)
+            elif method == 'masternode.subscribe':
+                collateral = params[0]
+                l = self.watched_masternodes.get(collateral)
+                if not l:
+                    return
+                if session in l:
+                    l.remove(session)
+                if session in l:
+                    print_log("error rc!!")
+                    self.shared.stop()
+                if l == []:
+                    self.watched_masternodes.pop(collateral)
             elif method == 'masternode.proposals.subscribe':
                 if session in self.watch_proposals:
                     self.watch_proposals.remove(session)
@@ -525,6 +550,10 @@ class BlockchainProcessor(Processor):
 
         elif method == 'blockchain.headers.subscribe':
             result = self.header
+
+        elif method == 'masternode.subscribe':
+            collateral = str(params[0])
+            result = self.get_masternodes_status().get(collateral)
 
         elif method == 'masternode.proposals.subscribe':
             result = self.get_proposals_status()
@@ -623,7 +652,7 @@ class BlockchainProcessor(Processor):
         elif method == 'masternode.winners':
             result = self.dashd('masternode', ['winners'])
 
-        elif method == 'masternode.broadcast.announce':
+        elif method == 'masternode.announce.broadcast':
             mn = str(params[0])
             result = self.dashd('masternodebroadcast', ['relay', mn])
 
@@ -934,6 +963,22 @@ class BlockchainProcessor(Processor):
                         'params': (self.header,),
                         })
 
+        # Update status of masternodes.
+        masternodes_status = self.get_masternodes_status()
+        if self.sent_masternodes_status != masternodes_status:
+            for collateral, status in masternodes_status.items():
+                # Skip if a masternode didn't change.
+                if status == self.sent_masternodes_status.get(collateral):
+                    continue
+                for session in self.watched_masternodes.get(collateral, []):
+                    self.push_response(session, {
+                        'id': None,
+                        'method': 'masternode.subscribe',
+                        'params': [collateral],
+                        'result': status,
+                    })
+            self.sent_masternodes_status = masternodes_status
+
         proposals_status = self.get_proposals_status()
         if self.sent_proposals_status != proposals_status:
             self.sent_proposals_status = proposals_status
@@ -941,7 +986,8 @@ class BlockchainProcessor(Processor):
                 self.push_response(session, {
                         'id': None,
                         'method': 'masternode.proposals.subscribe',
-                        'params': [proposals_status],
+                        'params': [],
+                        'result': proposals_status,
                         })
 
         while True:
