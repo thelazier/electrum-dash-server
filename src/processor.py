@@ -122,7 +122,6 @@ class Dispatcher:
     def register_prefix(self, prefix, processor):
         self.request_dispatcher.processors[prefix] = processor
 
-
 class RequestDispatcher(threading.Thread):
 
     def __init__(self, shared):
