@@ -37,10 +37,32 @@ from storage import Storage
 from utils import logger, hash_decode, hash_encode, HashX11, Hash, header_from_string, header_to_string, ProfiledThread, \
     rev_hex, int_to_hex4
 
+class RpcApi(object):
+    """Wrapper that supports different versions of dashd."""
+    def __init__(self, dashd_version=0):
+        self.set_version(dashd_version)
+
+    def set_version(self, version):
+        self.version = version
+
+        self.governance_method = 'mnbudget'
+        self.vote_method = 'mnbudgetvoteraw'
+
+        self.list_proposals_params = ('show',)
+
+        if version >= 120100:
+            self.governance_method = 'mngovernance'
+            self.vote_method = 'voteraw'
+
+            self.list_proposals_params = ('list',)
+
+
 class BlockchainProcessor(Processor):
 
     def __init__(self, config, shared):
         Processor.__init__(self)
+
+        self.rpc_api = RpcApi()
 
         # monitoring
         self.avg_time = 0,0,0
@@ -92,6 +114,7 @@ class BlockchainProcessor(Processor):
         self.sent_masternodes_status = {}
         self.sent_proposals_status = None
 
+        self.adjust_api_for_version()
         # catch_up headers
         self.init_headers(self.storage.height)
         # start catch_up thread
@@ -103,6 +126,12 @@ class BlockchainProcessor(Processor):
             self.blockchain_thread = threading.Thread(target = self.do_catch_up)
         self.blockchain_thread.start()
 
+    def adjust_api_for_version(self):
+        """Adjust the RPC API depending on the version of dashd running."""
+        info = self.dashd('getinfo')
+        version = int(info.get('version', '120100'))
+        print_log("Dashd version: %d" % version)
+        self.rpc_api.set_version(version)
 
     def do_catch_up(self):
         self.header = self.block2header(self.dashd('getblock', (self.storage.last_hash,)))
@@ -390,7 +419,7 @@ class BlockchainProcessor(Processor):
         return self.dashd('masternode', ('list',))
 
     def get_proposals_status(self):
-        return self.dashd('mnbudget', ('show',))
+        return self.dashd(self.rpc_api.governance_method, self.rpc_api.list_proposals_params)
 
     @staticmethod
     def deserialize_block(block):
@@ -502,18 +531,6 @@ class BlockchainProcessor(Processor):
                 elif session not in l:
                     l.append(session)
 
-            elif method == 'masternode.subscribe':
-                collateral = params[0]
-                l = self.watched_masternodes.get(collateral)
-                if l is None:
-                    self.watched_masternodes[collateral] = [session]
-                elif session not in l:
-                    l.append(session)
-
-            elif method == 'masternode.proposals.subscribe':
-                if session not in self.watch_proposals:
-                    self.watch_proposals.append(session)
-
 
     def do_unsubscribe(self, method, params, session):
         with self.watch_lock:
@@ -562,9 +579,6 @@ class BlockchainProcessor(Processor):
                     self.shared.stop()
                 if l == []:
                     self.watched_masternodes.pop(collateral)
-            elif method == 'masternode.proposals.subscribe':
-                if session in self.watch_proposals:
-                    self.watch_proposals.remove(session)
 
 
     def process(self, request, cache_only=False):
@@ -694,70 +708,36 @@ class BlockchainProcessor(Processor):
         # Masternode budget methods.
 
         elif method == 'masternode.budget.list':
-            result = self.dashd('mnbudget', ('show',))
+            result = self.dashd(self.rpc_api.governance_method, self.rpc_api.list_proposals_params)
 
         elif method == 'masternode.budget.nextblock':
-            result = self.dashd('mnbudget', ('nextblock',))
+            result = self.dashd(self.rpc_api.governance_method, ('nextblock',))
 
         elif method == 'masternode.budget.nextsuperblocksize':
-            result = self.dashd('mnbudget', ('nextsuperblocksize',))
+            result = self.dashd(self.rpc_api.governance_method, ('nextsuperblocksize',))
 
         elif method == 'masternode.budget.getvotes':
             proposal_hash = str(params[0])
-            result = self.dashd('mnbudget', ('getvotes', proposal_hash))
+            result = self.dashd(self.rpc_api.governance_method, ('getvotes', proposal_hash))
 
         elif method == 'masternode.budget.getproposalhash':
             proposal_name = str(params[0])
-            result = self.dashd('mnbudget', ('getproposalhash', proposal_name))
+            result = self.dashd(self.rpc_api.governance_method, ('getproposalhash', proposal_name))
 
         elif method == 'masternode.budget.getproposal':
             proposal_hash = str(params[0])
-            result = self.dashd('mnbudget', ('getproposal', proposal_hash))
+            result = self.dashd(self.rpc_api.governance_method, ('getproposal', proposal_hash))
 
         elif method == 'masternode.budget.projection':
-            result = self.dashd('mnbudget', ('projection',))
+            result = self.dashd(self.rpc_api.governance_method, ('projection',))
 
         # Submit a budget proposal.
         elif method == 'masternode.budget.submit':
-            result = self.dashd('mnbudget', ('submit', params))
+            result = self.dashd(self.rpc_api.governance_method, ('submit') + params)
 
         # Submit a budget proposal vote.
         elif method == 'masternode.budget.submitvote':
-            result = self.dashd('mnbudgetvoteraw', params)
-
-        elif method == 'masternode.masternodelist':
-            result = self.dashd('masternodelist', params)
-
-        # Masternode budget methods.
-
-        elif method == 'masternode.budget.list':
-            result = self.dashd('mnbudget', ['list'])
-
-        elif method == 'masternode.budget.nextblock':
-            result = self.dashd('mnbudget', ['nextblock'])
-        elif method == 'masternode.budget.nextsuperblocksize':
-            result = self.dashd('mnbudget', ['nextsuperblocksize'])
-
-        elif method == 'masternode.budget.getvotes':
-            proposal_hash = str(params[0])
-            result = self.dashd('mnbudget', ['getvotes', proposal_hash])
-        elif method == 'masternode.budget.getproposalhash':
-            proposal_name = str(params[0])
-            result = self.dashd('mnbudget', ['getproposalhash', proposal_name])
-        elif method == 'masternode.budget.getproposal':
-            proposal_hash = str(params[0])
-            result = self.dashd('mnbudget', ['getproposal', proposal_hash])
-
-        elif method == 'masternode.budget.projection':
-            result = self.dashd('mnbudget', ['projection'])
-
-        # Submit a budget proposal.
-        elif method == 'masternode.budget.submit':
-            result = self.dashd('mnbudget', ['submit'] + params)
-
-        # Submit a budget proposal vote.
-        elif method == 'masternode.budget.submitvote':
-            result = self.dashd('mnbudgetvoteraw', params)
+            result = self.dashd(self.rpc_api.list_proposals_params, params)
 
         else:
             raise BaseException("unknown method:%s" % method)
