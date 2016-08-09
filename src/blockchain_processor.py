@@ -737,7 +737,7 @@ class BlockchainProcessor(Processor):
 
         # Submit a budget proposal vote.
         elif method == 'masternode.budget.submitvote':
-            result = self.dashd(self.rpc_api.list_proposals_params, params)
+            result = self.dashd(self.rpc_api.vote_method, params)
 
         else:
             raise BaseException("unknown method:%s" % method)
